@@ -1,0 +1,296 @@
+<!doctype html>
+
+<html>
+
+<head>
+
+<title>
+	hello is it me your looking for?
+</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
+
+<link href="styles.css" rel="stylesheet">
+
+
+<script>
+
+function delay(ms) {
+  return function (x) {
+    return new Promise(resolve => setTimeout(() => resolve(x), ms));
+  };
+}
+
+let sectionStore = fetch("./store.json").then(res => res.json());
+
+// get all sections in users photo library - e.g. one section per month
+function getSections() {
+  return sectionStore.then(delay(50 + Math.random() * 500)).then(store => {
+    return store.map(section => {
+      return { sectionId: section.sectionId, totalImages: section.totalImages };
+    });
+  });
+}
+
+
+// get all segments inside one section - e.g. one segment per day
+function getSegments(sectionId) {
+  return sectionStore.then(delay(50 + Math.random() * 500)).then(store => {
+    return store.find(section => section.sectionId == sectionId).segments
+  });
+}
+
+// app state - list of all sections and their state
+var sectionStates = {};
+
+// grid's config - should be updated on viewport resize
+var config = {
+  containerWidth: window.innerWidth-10,
+  targetRowHeight: 150,
+  segmentsMargin: 20,
+  sectionMargin: 20
+};
+
+
+// populates section with actual segments html
+function populateSection(sectionDiv) {
+  getSegments(sectionDiv.id).then(segments => {
+    // adds all segments as childs of section
+    sectionDiv.innerHTML = segments.map(getSegmentHtml).join("\n");
+    sectionDiv.style.height = "100%"
+  });
+}
+
+function flexLayout(items, conf) {
+  const active = new Set();
+  const MIN_ROW_HEIGHT = 100;
+
+// Add initial active node for beginning of paragraph.
+active.add({
+  index: 0,
+  line: 0,
+  totalWidth: 0,
+  totalHeight: 0,
+  currentRowHeight: 0,
+  totalDemerits: 0,
+  prev: null,
+});
+
+// Sum of `width` of items up to current item.
+let sumWidth = 0;
+
+let minAdjustmentRatioAboveThreshold = Infinity;
+
+for (let b = 0; b < items.length; b++) {
+  const item = items[b];
+
+  if (item.width <= 0) {
+    throw new Error(`Item ${b} has disallowed negative width`);
+  }
+
+  sumWidth += item.width;
+
+  // Update the set of active nodes.
+  let lastActive = null;
+
+  // console.log(sumWidth);
+  // console.log("photo: " + b);
+
+  const feasible = [];
+  active.forEach((a) => {
+    // Compute adjustment ratio from `a` to `b`.
+    const idealHeight = conf.targetRowHeight;
+
+    let actualLen = sumWidth - a.totalWidth;
+    let currentRowHeight = (conf.containerWidth / (actualLen + item.width)) * item.height;
+
+    let actualWidth = sumWidth - a.totalWidth;
+    // console.log("line: " + a.line);
+    // console.log("width: " + actualWidth);
+    // console.log("height: " + currentRowHeight);
+    let demerits = Math.abs(idealHeight - currentRowHeight);
+    if (currentRowHeight > MIN_ROW_HEIGHT) {
+
+      const node = {
+        index: b,
+        line: a.line + 1,
+        totalWidth: sumWidth,
+        totalHeight: a.totalHeight + currentRowHeight,
+        currentRowHeight: currentRowHeight,
+        totalDemerits: a.totalDemerits + demerits,
+        prev: a,
+      };
+      feasible.push(node);
+    } else {
+      console.log("too many on one row. "+ b + " line: "+ a.line + 1)
+    }
+  });
+
+  // Add feasible breakpoint with lowest score to active set.
+  if (feasible.length > 0) {
+    let bestNode = feasible[0];
+    for (let f of feasible) {
+      if (f.totalDemerits < bestNode.totalDemerits) {
+        bestNode = f;
+      }
+    }
+    active.add(bestNode);
+  }
+
+
+    // Handle situation where there is no way to break the paragraph without
+    // shrinking or stretching a line beyond [-1, currentMaxAdjustmentRatio].
+    if (active.size === 0) {
+      console.log("uh wat");
+    }
+  }
+
+  // Choose active node with fewest total demerits as the last breakpoint.
+  //
+  // There should always be an active node at this point since:
+  //
+  //  1. We add a node to the active set before entering the loop.
+  //  2. Each iteration of the loop either returns from the function, leaves the
+  //     active set unchanged and breaks early or finishes with a non-empty active
+  //     set.
+  let bestNode = null;
+  active.forEach((a) => {
+    // console.log(a.totalDemerits);
+    if ((!bestNode || a.totalDemerits < bestNode.totalDemerits) && a.index == items.length - 1) {
+      bestNode = a;
+    }
+  });
+
+  // Follow the chain backwards from the chosen node to get the sequence of
+  // chosen breakpoints.
+  const output = [];
+  let next = bestNode;
+  while (next) {
+    output.push({index: next.index, rowHeight: next.currentRowHeight, demerits: next.totalDemerits});
+    next = next.prev;
+  }
+  output.reverse();
+
+  return output;
+}
+
+function bisectRight (array, x) {
+  for (var i = 1; i <= array.length; i++) {
+    if (array[array.length - i] <= x) return array.length - i
+  }
+  return array.length - 1;
+}
+
+function justifiedLayout(sizes, conf) {
+  const layout = flexLayout(sizes, conf);
+  // console.log(layout);
+  var runningWidth = 0;
+
+
+  var left = sizes.reduce((pV, cV, cI) => {
+    // console.log(cI);
+    let row = bisectRight(layout.map(l => l.index), cI);
+    // console.log("row: " + row);
+    let rowHeight = layout[row].rowHeight;
+
+    let top = layout.slice(row+1, layout.length - 1).map(l => l.rowHeight).reduce((a, b) => a + b, 0);
+
+    pV.push({
+      width: cV.width,
+      height: cV.height,
+      top: top,
+      // left: pV.map(p => (conf.targetRowHeight / p.height) * p.width + 2).reduce((partialSum, a) => partialSum + a, 0),
+      left: pV.map(p => (rowHeight / p.height) * p.width + 2).reduce((partialSum, a) => partialSum + a, 0),
+      // scale: conf.targetRowHeight / cV.height
+      scale: rowHeight / cV.height
+    });
+    return pV;
+  }, []);
+
+  // console.log(left);
+
+  const boxes = left.map(size => {
+    const box = {
+      width: size.width * size.scale,
+      height: size.height * size.scale,
+      // left: size.left % conf.containerWidth,
+      left: size.left,
+      // top: Math.floor(size.left / conf.containerWidth) * 152
+      top: size.top
+    };
+    return box;
+  });
+  return {
+    containerHeight: 152 + boxes[boxes.length - 1].top,
+    boxes: boxes
+  };
+}
+
+// generates Segment html
+function getSegmentHtml(segment) {
+  const sizes = segment.images.map(image => image.metadata);
+  var geometry = justifiedLayout(sizes, config);
+
+  // gets tiles for each box given by justified layout lib
+  var tiles = geometry.boxes.map(getTileHtml).join("\n");
+
+  return `<div id="${segment.segmentId}" class="segment" style="width: ${config.containerWidth}px; height: ${geometry.containerHeight}px;">${tiles}</div>`;
+}
+
+// generates Tile html
+function getTileHtml(box) {
+  return `<div class="tile" style="width: ${box.width}px; height: ${box.height}px; left: ${box.left}px; top: ${box.top}px;"></div>`;
+}
+
+// gets all sections using api, populates grid div
+function loadUi() {
+  getSections().then(sections => {
+    allSections = sections;
+    populateGrid(document.getElementById("grid"));
+  });
+}
+loadUi();
+
+// populates grid node with all detached sections
+function populateGrid(gridNode) {
+  const sectionsHtml = allSections.map(getDetachedSectionHtml).join("\n");
+  gridNode.innerHTML = sectionsHtml;
+
+ gridNode.querySelectorAll(".section").forEach(populateSection);
+
+  //populateSection(gridNode.querySelectorAll(".section")[0]);
+}
+
+// generates detached section html, detached section has estimated height and no segments loaded
+function getDetachedSectionHtml(section) {
+  return `<div id="${section.sectionId}" class="section" style="width: ${config.containerWidth}px; height: ${estimateSectionHeight(section)}px;">&nbsp;</div>`;
+}
+
+function estimateSectionHeight (section) {
+const photoCount=section.totalImages;
+const targetHeight=100;
+const viewportWidth= 1680;
+// Ideally we would use the average aspect ratio for the photoset, however assume
+// a normal landscape aspect ratio of 3:2, then discount for the likelihood we
+// will be scaling down and coalescing.
+const unwrappedWidth = (3 / 2) * photoCount * targetHeight * (7 / 10);
+const rows = Math.ceil(unwrappedWidth / viewportWidth);
+const height = rows * targetHeight;
+return height;
+}
+
+
+</script>
+
+</head>
+
+<body>
+<h1> help me 
+</h1>
+
+<div id="grid" class="scrubbable-grid"></div>
+
+</body>
+
+</html>

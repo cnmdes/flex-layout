@@ -1,0 +1,26 @@
+body {
+  margin: 0;
+}
+
+.scrubbable-grid {
+  position: relative;
+}
+
+.section {
+  position: relative;
+  background-color: blueviolet;
+  margin: 20px, 0px;
+}
+
+.segment {
+  position: relative;
+  background-color: blue;
+  margin: 20px, 0px;
+}
+
+.tile {
+  position: absolute;
+  background-color: yellow;
+  border: 1px black solid;
+  z-index:1000;
+}
